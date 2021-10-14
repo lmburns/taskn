@@ -1,12 +1,14 @@
-use std::fs::{create_dir_all, File};
-use std::io::{self, BufRead, BufReader};
-use std::path::PathBuf;
-use std::process::{exit, Command};
+use std::{
+    fs::{create_dir_all, File},
+    io::{self, BufRead, BufReader},
+    path::PathBuf,
+    process::{exit, Command},
+};
 
-use crate::opt::Opt;
-use crate::taskwarrior::Task;
+use anyhow::Result;
+use crate::{opt::Opt, taskwarrior::Task};
 
-pub fn execute(opt: Opt) -> io::Result<()> {
+pub(crate) fn execute(opt: &Opt) -> Result<()> {
     let tasks = Task::get(opt.args.iter())?;
 
     if create_dir_all(&opt.root_dir).is_err() {
@@ -18,17 +20,18 @@ pub fn execute(opt: Opt) -> io::Result<()> {
         .args(
             tasks
                 .iter()
-                .map(|task| task_path(&opt, task))
+                .map(|task| task_path(opt, task))
                 .collect::<Vec<PathBuf>>(),
         )
         .status()?;
+
     if !status.success() {
         eprintln!("Failed to open editor '{}' ", &opt.editor);
         exit(1)
     }
 
-    for task in tasks.iter() {
-        let has_note = task_has_note(&opt, task)?;
+    for task in tasks {
+        let has_note = task_has_note(opt, &task)?;
         let has_tag = task.has_tag("taskn");
 
         let action = if has_note && !has_tag {
@@ -57,11 +60,11 @@ pub fn execute(opt: Opt) -> io::Result<()> {
 }
 
 fn task_has_note(opt: &Opt, task: &Task) -> io::Result<bool> {
-    // a lot of editors will keep an "empty" line at the top of a file, so a naive 'byte size
-    // == 0' check won't cut it.
+    // a lot of editors will keep an "empty" line at the top of a file, so a naive
+    // 'byte size == 0' check won't cut it.
     //
-    // because we expect notes to be VERY small (on the order of KB at most), we can just scan
-    // to see if there's any non-whitespace.
+    // because we expect notes to be VERY small (on the order of KB at most), we can
+    // just scan to see if there's any non-whitespace.
     //
     // NOTE: if perf becomes an issue, this will become a good place to refactor
     let file = match File::open(task_path(opt, task)) {

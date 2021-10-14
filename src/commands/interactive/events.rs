@@ -1,36 +1,34 @@
-use std::io;
-use std::sync::mpsc;
-use std::thread;
+use anyhow::{Context, Result};
+use signal_hook::{consts::signal::SIGWINCH, iterator::Signals};
+use std::{io, sync::mpsc, thread};
+use termion::{event::Key, input::TermRead};
 
-use signal_hook::consts::signal::SIGWINCH;
-use signal_hook::iterator::Signals;
-use termion::event::Key;
-use termion::input::TermRead;
-
-pub enum Event {
+pub(crate) enum Event {
     Key(Key),
     Resize,
 }
 
-pub struct Events {
+pub(crate) struct Events {
     rx: mpsc::Receiver<Event>,
 
-    _input_thread: thread::JoinHandle<()>,
+    _input_thread:  thread::JoinHandle<()>,
     _signal_thread: thread::JoinHandle<()>,
 }
 
 impl Events {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
             rx,
             _input_thread: make_input_thread(tx.clone()),
-            _signal_thread: make_signal_thread(tx.clone()),
+            _signal_thread: make_signal_thread(tx),
         }
     }
 
-    pub fn next(&self) -> io::Result<Event> {
-        Ok(self.rx.recv().unwrap())
+    pub(crate) fn next(&self) -> Result<Event> {
+        self.rx
+            .recv()
+            .context("error receiving next item in iterator")
     }
 }
 

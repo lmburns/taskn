@@ -1,17 +1,18 @@
-//! Provides a high-level wrapper around the eventkit-sys crate defined in this repository.
-//! This module allows one to read, create, and update reminders on macOS.
-//! Because this module depends on eventkit-sys, do not expect it to compile on non-macOS systems.
-use std::ffi::{c_void, CString};
-use std::os::raw::c_char;
-use std::ptr::null_mut;
-use std::slice;
-use std::str;
-use std::sync::{Arc, Condvar, Mutex};
+//! Provides a high-level wrapper around the eventkit-sys crate defined in this
+//! repository. This module allows one to read, create, and update reminders on
+//! macOS. Because this module depends on eventkit-sys, do not expect it to
+//! compile on non-macOS systems.
+use std::{
+    ffi::{c_void, CString},
+    os::raw::c_char,
+    ptr::null_mut,
+    slice, str,
+    sync::{Arc, Condvar, Mutex},
+};
 
 use block::ConcreteBlock;
 use chrono::{DateTime, Datelike, TimeZone, Timelike};
-use objc::runtime::Object;
-use objc::{class, msg_send, sel, sel_impl};
+use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 
 // NOTE:
 //   - calendarItemWithIdentifier to get a reminder
@@ -22,21 +23,23 @@ use objc::{class, msg_send, sel, sel_impl};
 extern "C" {}
 
 #[derive(Clone, Debug)]
-pub enum EKError {
-    /// Used when an operation requires some kind of permissions that the user has not provided.
+pub(crate) enum EKError {
+    /// Used when an operation requires some kind of permissions that the user
+    /// has not provided.
     NoAccess,
 
-    /// General case whenever an NSError is encountered. The String is populated by the NSError's
-    /// localizedDescription.
+    /// General case whenever an NSError is encountered. The String is populated
+    /// by the NSError's localizedDescription.
     NSError(String),
 
-    /// Used when an operation attempts to retrieve a value that may not be present.
+    /// Used when an operation attempts to retrieve a value that may not be
+    /// present.
     NotFound,
 }
 
 impl EKError {
-    /// The caller of this function must ensure that the *mut Object provided is, in fact, an
-    /// NSError nad not some other kind of Object.
+    /// The caller of this function must ensure that the *mut Object provided
+    /// is, in fact, an NSError nad not some other kind of Object.
     unsafe fn from_ns_error(ns_error: *mut Object) -> EKError {
         let ns_desc = msg_send![ns_error, localizedDescription];
         let desc = from_ns_string(ns_desc);
@@ -44,14 +47,14 @@ impl EKError {
     }
 }
 
-pub type EKResult<T> = Result<T, EKError>;
+pub(crate) type EKResult<T> = Result<T, EKError>;
 
-pub struct EventStore {
+pub(crate) struct EventStore {
     ek_event_store: *mut Object,
 }
 
 impl EventStore {
-    pub fn new() -> EKResult<Self> {
+    pub(crate) fn new() -> Self {
         let cls = class!(EKEventStore);
         let mut ek_event_store: *mut Object;
         unsafe {
@@ -59,16 +62,16 @@ impl EventStore {
             ek_event_store = msg_send![ek_event_store, init];
         }
 
-        Ok(Self { ek_event_store })
+        Self { ek_event_store }
     }
 
-    pub fn new_with_permission() -> EKResult<Self> {
-        let mut event_store = Self::new()?;
+    pub(crate) fn new_with_permission() -> EKResult<Self> {
+        let mut event_store = Self::new();
         event_store.request_permission()?;
         Ok(event_store)
     }
 
-    pub fn request_permission(&mut self) -> EKResult<()> {
+    pub(crate) fn request_permission(&mut self) -> EKResult<()> {
         let has_permission = Arc::new(Mutex::new(Ok(false)));
         let has_permission_cond = Arc::new(Condvar::new());
         let completion_block;
@@ -77,12 +80,12 @@ impl EventStore {
             let has_permission_cond = has_permission_cond.clone();
             completion_block = ConcreteBlock::new(move |granted: bool, ns_error: *mut Object| {
                 let mut lock = has_permission.lock().unwrap();
-                if ns_error != null_mut() {
+                if ns_error.is_null() {
+                    *lock = Ok(granted);
+                } else {
                     unsafe {
                         *lock = Err(EKError::from_ns_error(ns_error));
                     }
-                } else {
-                    *lock = Ok(granted);
                 }
                 has_permission_cond.notify_one();
             })
@@ -101,19 +104,19 @@ impl EventStore {
 
         match &*lock {
             Err(e) => Err(e.clone()),
-            Ok(granted) => {
-                if !granted {
-                    Err(EKError::NoAccess)
-                } else {
+            Ok(granted) =>
+                if *granted {
                     Ok(())
-                }
-            }
+                } else {
+                    Err(EKError::NoAccess)
+                },
         }
     }
 
-    pub fn save_reminder(&mut self, reminder: &Reminder, commit: bool) -> EKResult<bool> {
+    pub(crate) fn save_reminder(&mut self, reminder: &Reminder, commit: bool) -> EKResult<bool> {
         let mut ns_error: *mut Object = null_mut();
         let saved: bool;
+        #[allow(trivial_casts)]
         unsafe {
             saved = msg_send![
                 self.ek_event_store,
@@ -123,14 +126,14 @@ impl EventStore {
             ];
         }
 
-        if ns_error != null_mut() {
+        if ns_error.is_null() {
             unsafe { return Err(EKError::from_ns_error(ns_error)) }
         }
 
         Ok(saved)
     }
 
-    pub fn get_reminder<S: AsRef<str>>(&mut self, uuid: S) -> EKResult<Reminder> {
+    pub(crate) fn get_reminder<S: AsRef<str>>(&mut self, uuid: S) -> EKResult<Reminder> {
         let ns_string = to_ns_string(uuid.as_ref().to_string());
         let ek_reminder: *mut Object;
         unsafe {
@@ -138,7 +141,7 @@ impl EventStore {
             let _: *mut Object = msg_send![ns_string, release];
         }
 
-        if ek_reminder == null_mut() {
+        if ek_reminder.is_null() {
             Err(EKError::NotFound)
         } else {
             Ok(Reminder { ek_reminder })
@@ -154,12 +157,12 @@ impl Drop for EventStore {
     }
 }
 
-pub struct Reminder {
+pub(crate) struct Reminder {
     ek_reminder: *mut Object,
 }
 
 impl Reminder {
-    pub fn new(event_store: &mut EventStore) -> Self {
+    pub(crate) fn new(event_store: &mut EventStore) -> Self {
         let cls = class!(EKReminder);
         let ek_reminder: *mut Object;
         unsafe {
@@ -175,7 +178,7 @@ impl Reminder {
         Self { ek_reminder }
     }
 
-    pub fn uuid(&self) -> String {
+    pub(crate) fn uuid(&self) -> String {
         let ns_string: *mut Object;
         unsafe {
             ns_string = msg_send![self.ek_reminder, calendarItemIdentifier];
@@ -183,9 +186,9 @@ impl Reminder {
         }
     }
 
-    // TODO: this part is probably dangerous + leaks memory. come back here at some point and clean
-    // it up.
-    pub fn set_title<S: AsRef<str>>(&mut self, title: S) -> &mut Self {
+    // TODO: this part is probably dangerous + leaks memory. come back here at some
+    // point and clean it up.
+    pub(crate) fn set_title<S: AsRef<str>>(&mut self, title: S) -> &mut Self {
         let ns_string = to_ns_string(title.as_ref().to_string());
         unsafe {
             let _: c_void = msg_send![self.ek_reminder, setTitle: ns_string];
@@ -193,7 +196,7 @@ impl Reminder {
         self
     }
 
-    pub fn set_notes<S: AsRef<str>>(&mut self, notes: S) -> &mut Self {
+    pub(crate) fn set_notes<S: AsRef<str>>(&mut self, notes: S) -> &mut Self {
         let ns_string = to_ns_string(notes.as_ref().to_string());
         unsafe {
             let _: c_void = msg_send![self.ek_reminder, setNotes: ns_string];
@@ -201,9 +204,9 @@ impl Reminder {
         self
     }
 
-    pub fn set_alarm<Tz: TimeZone>(&mut self, date_time: Option<DateTime<Tz>>) -> &mut Self {
+    pub(crate) fn set_alarm<Tz: TimeZone>(&mut self, date_time: Option<DateTime<Tz>>) -> &mut Self {
         if let Some(date_time) = date_time {
-            let ns_date_components = to_ns_date_components(date_time);
+            let ns_date_components = to_ns_date_components(&date_time);
             unsafe {
                 let _: c_void =
                     msg_send![self.ek_reminder, setDueDateComponents: ns_date_components];
@@ -254,11 +257,13 @@ enum EKEntityType {
 
 /// Converts a str-like to an
 /// [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc)
-/// returning it as a `*mut Object`. It is the responsibility of the caller to free this string.
+/// returning it as a `*mut Object`. It is the responsibility of the caller to
+/// free this string.
 ///
 /// # Arguments
 ///
-/// * `s` - The string we want to convert to an NSString. This can be owned or unowned.
+/// * `s` - The string we want to convert to an NSString. This can be owned or
+///   unowned.
 fn to_ns_string<S: AsRef<str>>(s: S) -> *mut Object {
     let c_string = CString::new(s.as_ref()).unwrap().into_raw();
 
@@ -270,7 +275,7 @@ fn to_ns_string<S: AsRef<str>>(s: S) -> *mut Object {
     }
 
     unsafe {
-        let _ = CString::from_raw(c_string);
+        let _d = CString::from_raw(c_string);
     }
 
     ns_string
@@ -279,9 +284,10 @@ fn to_ns_string<S: AsRef<str>>(s: S) -> *mut Object {
 /// Converts an [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc)
 /// into a [String].
 ///
-/// The provided NSString MUST be UTF8 encoded. This function copies from the NSString, and does
-/// not attempt to release it.
+/// The provided NSString MUST be UTF8 encoded. This function copies from the
+/// NSString, and does not attempt to release it.
 unsafe fn from_ns_string(ns_string: *mut Object) -> String {
+    #[allow(clippy::ptr_as_ptr)]
     let bytes = {
         let bytes: *const c_char = msg_send![ns_string, UTF8String];
         bytes as *const u8
@@ -298,7 +304,7 @@ unsafe fn from_ns_string(ns_string: *mut Object) -> String {
 /// # Arguments
 ///
 /// * `date_time` - The datetime we want to convert.
-fn to_ns_date_components<Tz: TimeZone>(date_time: DateTime<Tz>) -> *mut Object {
+fn to_ns_date_components<Tz: TimeZone>(date_time: &DateTime<Tz>) -> *mut Object {
     let mut ns_date_components: *mut Object;
     unsafe {
         ns_date_components = msg_send![class!(NSDateComponents), alloc];
@@ -370,7 +376,7 @@ mod tests {
             .set_title("a title")
             .set_notes("a notes")
             .set_alarm(Some(Local.from_utc_datetime(
-                &NaiveDate::from_ymd(2021, 5, 01).and_hms(12, 0, 0),
+                &NaiveDate::from_ymd(2021, 5, 1).and_hms(12, 0, 0),
             )));
         Ok(())
     }
@@ -384,7 +390,7 @@ mod tests {
             .set_title("a title")
             .set_notes("a notes")
             .set_alarm(Some(Local.from_utc_datetime(
-                &NaiveDate::from_ymd(2021, 5, 01).and_hms(12, 0, 0),
+                &NaiveDate::from_ymd(2021, 5, 1).and_hms(12, 0, 0),
             )));
         let saved = event_store.save_reminder(&reminder, true)?;
         assert!(saved);

@@ -1,77 +1,85 @@
+use clap::{crate_description, crate_name, AppSettings, Clap};
 use std::env;
-use std::str::FromStr;
-
-use structopt::StructOpt;
 
 use crate::commands::Command;
 
-#[derive(StructOpt)]
-#[structopt(name = "taskn", about = "Taskwarrior task annotation helper")]
+#[derive(Debug, Clap)]
+#[clap(
+    name = crate_name!(),
+    about = crate_description!(),
+    global_setting = AppSettings::ColorAuto,
+    global_setting = AppSettings::ColoredHelp,
+    global_setting = AppSettings::InferSubcommands,
+    global_setting = AppSettings::DisableHelpSubcommand,
+    global_setting = AppSettings::HidePossibleValuesInHelp,
+)]
 struct ProtoOpt {
-    /// The editor used to open task notes. If unset, taskn will attempt to use $EDITOR. If $EDITOR
-    /// is also unset, taskn will use vi.
-    #[structopt(long)]
+    /// The editor used to open task notes. Uses `$EDITOR` or `vi`
+    #[clap(long, short = 'e', next_line_help = true, env = "EDITOR")]
     editor: Option<String>,
 
     /// The file format used for task notes.
-    #[structopt(long, default_value = "md")]
+    #[clap(long, short = 'f', default_value = "md", next_line_help = true)]
     file_format: String,
 
-    /// The directory in which task notes are placed. If the directory does not already exist,
-    /// taskn will create it.
-    #[structopt(long, default_value = "~/.taskn")]
+    /// The directory in which task notes are placed. If the directory does not
+    /// already exist, taskn will create it.
+    #[clap(long, short = 'r', default_value = "~/.taskn", next_line_help = true)]
     root_dir: String,
 
-    #[structopt(default_value = "edit")]
-    command: String,
+    /// Only workon tasks with the `taskn` tag (only works with interactive, for now)
+    #[clap(short, long = "only")]
+    only_taskn: bool,
 
-    /// Any remaining arguments are passed along to taskwarrior while selecting tasks.
+    /// Subcommand to run
+    #[clap(subcommand)]
+    command: Option<Command>,
+
+    /// Any remaining arguments are passed along to taskwarrior while selecting
+    /// tasks.
     args: Vec<String>,
 }
 
-pub struct Opt {
-    pub editor: String,
-    pub file_format: String,
-    pub root_dir: String,
-    pub command: Command,
-    pub args: Vec<String>,
+#[derive(Debug)]
+pub(crate) struct Opt {
+    pub(crate) editor:      String,
+    pub(crate) only_taskn:  bool,
+    pub(crate) file_format: String,
+    pub(crate) root_dir:    String,
+    pub(crate) command:     Command,
+    pub(crate) args:        Vec<String>,
 }
 
 impl Opt {
     fn from_proto_opt(proto_opt: ProtoOpt) -> Self {
-        let editor = if let Some(editor) = proto_opt.editor {
-            editor
-        } else if let Ok(editor) = env::var("EDITOR") {
-            editor
-        } else {
-            "vi".to_string()
-        };
-
-        let root_dir = shellexpand::tilde(&proto_opt.root_dir).to_string();
-
-        let command;
-        let args;
-        match Command::from_str(&proto_opt.command) {
-            Ok(cmd) => {
-                command = cmd;
-                args = proto_opt.args;
-            }
-            Err(_) => {
-                command = Command::Edit;
-                args = [&[proto_opt.command], &proto_opt.args[..]].concat();
-            }
-        }
+        // match Command::from_str(&proto_opt.command) {
+        //     Ok(cmd) => {
+        //         command = cmd;
+        //         args = proto_opt.args;
+        //     },
+        //     Err(_) => {
+        //         command = Command::Edit;
+        //         args = [&[proto_opt.command], &proto_opt.args[..]].concat();
+        //     },
+        // }
 
         Opt {
-            editor,
+            editor:      if let Some(editor) = proto_opt.editor {
+                editor
+            } else if let Ok(editor) = env::var("EDITOR") {
+                editor
+            } else {
+                "vi".to_string()
+            },
+            only_taskn:  proto_opt.only_taskn,
             file_format: proto_opt.file_format,
-            root_dir,
-            command,
-            args,
+            root_dir:    shellexpand::tilde(&proto_opt.root_dir).to_string(),
+            command:     proto_opt.command.unwrap_or_default(),
+            args:        proto_opt.args,
         }
     }
 
-    pub fn from_args() -> Self {
-        Self::from_proto_opt(ProtoOpt::from_args())
+    pub(crate) fn from_args() -> Self {
+        Self::from_proto_opt(ProtoOpt::parse())
     }
 }

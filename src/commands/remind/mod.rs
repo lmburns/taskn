@@ -1,13 +1,11 @@
 mod eventkit;
 
-use std::io;
-
-use crate::opt::Opt;
-use crate::taskwarrior::Task;
+use crate::{opt::Opt, taskwarrior::Task};
+use anyhow::Result;
 use eventkit::{EventStore, Reminder};
 
-pub fn execute(opt: Opt) -> io::Result<()> {
-    let mut taskwarrior_args = opt.args;
+pub(crate) fn execute(opt: &Opt) -> Result<()> {
+    let mut taskwarrior_args = opt.args.clone();
     taskwarrior_args.push("+remindme".to_string());
     taskwarrior_args.push("(status:pending or status:waiting)".to_string());
     let mut tasks = Task::get(taskwarrior_args.into_iter())?;
@@ -32,7 +30,7 @@ pub fn execute(opt: Opt) -> io::Result<()> {
         event_store
             .save_reminder(&reminder, i == task_len - 1)
             .unwrap();
-        task.set_reminder_uuid(reminder.uuid())?;
+        task.set_reminder_uuid(&reminder.uuid())?;
     }
 
     Ok(())

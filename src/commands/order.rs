@@ -1,12 +1,16 @@
+// NEEDS TO BE COMPLETELY REWRITTEN
+//
+// Unsure of the goal of this subcommand, but it just rewrites the names of
+// every task with 'estimate:n'. Better documentation would help
+
+use anyhow::{Context, Result};
 use std::cmp::Ordering;
-use std::io;
 
-use crate::opt::Opt;
-use crate::taskwarrior::Task;
+use crate::{opt::Opt, taskwarrior::Task};
 
-pub fn execute(opt: Opt) -> io::Result<()> {
+pub(crate) fn execute(opt: &Opt) -> Result<()> {
     let mut tasks = tasks_ordered()?;
-    if opt.args.len() > 0 {
+    if !opt.args.is_empty() {
         // args.len() > 0 -> we want to reorder a specific task
         assert!(opt.args.len() == 2);
         let target_id: usize = opt.args[0].parse().unwrap();
@@ -27,14 +31,15 @@ pub fn execute(opt: Opt) -> io::Result<()> {
     }
 
     for (i, task) in tasks.iter_mut().enumerate() {
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         task.set_estimate(Some(i as i32))?;
     }
     Ok(())
 }
 
-fn tasks_ordered() -> io::Result<Vec<Task>> {
+fn tasks_ordered() -> Result<Vec<Task>> {
     let args = &["status:pending"];
-    let mut tasks = Task::get(args.iter())?;
+    let mut tasks = Task::get(args.iter()).context("error getting taskwarrior output")?;
     tasks.sort_by(estimate_order);
     Ok(tasks)
 }

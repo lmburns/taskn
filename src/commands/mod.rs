@@ -1,29 +1,44 @@
-pub mod edit;
-pub mod interactive;
-pub mod order;
-pub mod remind;
+pub(crate) mod edit;
+pub(crate) mod interactive;
+pub(crate) mod order;
+#[cfg(target = "macos")]
+pub(crate) mod remind;
 
-use std::io;
 use std::str::FromStr;
+use anyhow::Result;
+use clap::Clap;
 
 use crate::opt::Opt;
 
-#[derive(Clone, Copy)]
-pub enum Command {
+/// Available subcommands
+#[derive(Clap, Debug, Clone, PartialEq, Copy)]
+pub(crate) enum Command {
+    /// Edit or create the `taskn` notes
     Edit,
+    /// Open an interactive viewer of `task` reminders
     Interactive,
+    /// WTF?
     Order,
+    /// Set a reminder on `macOS`
+    #[cfg(target = "macos")]
     Remind,
 }
 
+impl Default for Command {
+    fn default() -> Self {
+        Self::Edit
+    }
+}
+
 impl Command {
-    pub fn execute(self, opt: Opt) -> io::Result<()> {
-        use Command::*;
+    /// Does the main work of the program by executing each subcommand with its options
+    pub(crate) fn execute(self, opt: &Opt) -> Result<()> {
         match self {
-            Edit => edit::execute(opt),
-            Interactive => interactive::execute(opt),
-            Order => order::execute(opt),
-            Remind => remind::execute(opt),
+            Self::Edit => edit::execute(opt),
+            Self::Interactive => interactive::execute(opt),
+            Self::Order => order::execute(opt),
+            #[cfg(target = "macos")]
+            Self::Remind => remind::execute(opt),
         }
     }
 }
@@ -32,13 +47,13 @@ impl FromStr for Command {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use Command::*;
-        match s {
-            "edit" => Ok(Edit),
-            "interactive" => Ok(Interactive),
-            "order" => Ok(Order),
-            "remind" => Ok(Remind),
-            _ => Err(format!("failed to parse Command from '{}'", s)),
+        match s.trim().to_ascii_lowercase().as_str() {
+            "edit" => Ok(Self::Edit),
+            "interactive" => Ok(Self::Interactive),
+            "order" => Ok(Self::Order),
+            #[cfg(target = "macos")]
+            "remind" => Ok(Self::Remind),
+            _ => Err(format!("failed to parse command from '{}'", s)),
         }
     }
 }
